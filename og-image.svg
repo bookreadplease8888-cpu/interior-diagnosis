@@ -1,0 +1,126 @@
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+import { ProductCard } from "@/components/product-card";
+import { SetPlanCard } from "@/components/set-plan";
+import { ShareButton } from "@/components/share-button";
+import { Container, LinkButton, SectionCard } from "@/components/ui";
+import { STYLE_MAP, type StyleKey } from "@/lib/constants";
+import { diagnoseStyle } from "@/lib/diagnosis";
+import { buildSetPlans, rankItems } from "@/lib/recommendations";
+import { siteConfig } from "@/lib/site";
+import { getAdminSupabase } from "@/lib/supabase";
+import type { Item } from "@/lib/types";
+import { currency } from "@/lib/utils";
+
+export async function generateMetadata({ params }: { params: Promise<{ style: string }> }): Promise<Metadata> {
+  const { style } = await params;
+  const key = style as StyleKey;
+  const data = STYLE_MAP[key];
+  if (!data) return {};
+  return {
+    title: `${data.label}｜おすすめインテリア＆家具`,
+    description: data.metaDescription,
+  };
+}
+
+async function fetchItems(style: StyleKey) {
+  const supabase = getAdminSupabase();
+  const { data } = await supabase.from("items").select("*").eq("is_active", true).contains("tags", [style]).order("priority", { ascending: false }).limit(60);
+  return (data ?? []) as Item[];
+}
+
+export default async function ResultPage({ params, searchParams }: { params: Promise<{ style: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const { style } = await params;
+  const key = style as StyleKey;
+  const config = STYLE_MAP[key];
+  if (!config) notFound();
+
+  const sp = await searchParams;
+  const intake = {
+    livingType: typeof sp.livingType === "string" ? sp.livingType : "一人暮らし",
+    occupation: typeof sp.occupation === "string" ? sp.occupation : "社会人",
+    age: typeof sp.age === "string" ? sp.age : "",
+    gender: typeof sp.gender === "string" ? sp.gender : "",
+    budget: Number(typeof sp.budget === "string" ? sp.budget : 30000),
+    floorColor: (typeof sp.floorColor === "string" ? sp.floorColor : "mid") as "light" | "mid" | "dark",
+    wallColor: (typeof sp.wallColor === "string" ? sp.wallColor : "white") as "white" | "gray" | "color",
+    furnitureNeeds: typeof sp.furnitureNeeds === "string" ? sp.furnitureNeeds.split(",").filter(Boolean) : ["table", "lighting", "rug"],
+    answers: {},
+  };
+  const result = diagnoseStyle(intake);
+  const items = await fetchItems(key);
+  const ranked = rankItems(items, result, intake).slice(0, 12);
+  const plans = buildSetPlans(items, intake, result);
+  const resultUrl = `${siteConfig.url}/result/${key}`;
+  const shareText = `私は「${config.label}」だった。あなたも部屋タイプ診断やってみて。`;
+
+  return (
+    <main className="py-8 sm:py-12">
+      <Container className="space-y-6">
+        <SectionCard className="bg-[linear-gradient(135deg,_#fff,_#f5f1ff)]">
+          <p className="text-sm font-semibold text-black/60">診断結果</p>
+          <h1 className="mt-2 text-4xl font-black tracking-tight sm:text-5xl">あなたは「{config.label}」</h1>
+          <p className="mt-3 text-lg font-semibold text-black/80">{config.subtitle}</p>
+          <div className="mt-5 grid gap-4 sm:grid-cols-3">
+            <div className="rounded-2xl bg-white p-4">
+              <p className="text-xs text-black/50">センス・モテ度・居心地</p>
+              <p className="mt-1 text-lg font-black">{config.scoreLabel}</p>
+            </div>
+            <div className="rounded-2xl bg-white p-4">
+              <p className="text-xs text-black/50">相性カラー</p>
+              <p className="mt-1 text-lg font-black">{result.matchedColors.join(" / ")}</p>
+            </div>
+            <div className="rounded-2xl bg-white p-4">
+              <p className="text-xs text-black/50">予算</p>
+              <p className="mt-1 text-lg font-black">{currency(intake.budget)}</p>
+            </div>
+          </div>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <ShareButton text={shareText} url={resultUrl} />
+            <LinkButton href="/start" className="border border-black/10 bg-white text-black">もう一度診断する</LinkButton>
+          </div>
+        </SectionCard>
+
+        <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+          <SectionCard>
+            <h2 className="text-2xl font-black">分析</h2>
+            <p className="mt-3 text-sm leading-7 text-black/70">{config.analysis}</p>
+            <p className="mt-3 text-sm leading-7 text-black/70">{result.why}</p>
+          </SectionCard>
+          <SectionCard>
+            <h2 className="text-2xl font-black">一撃改善</h2>
+            <p className="mt-3 text-sm leading-7 text-black/70">{config.oneShot}</p>
+          </SectionCard>
+        </div>
+
+        <SectionCard>
+          <h2 className="text-2xl font-black">NGポイント</h2>
+          <ul className="mt-4 grid gap-3 sm:grid-cols-3">
+            {config.ngPoints.map((point) => (
+              <li key={point} className="rounded-2xl bg-neutral-50 px-4 py-4 text-sm font-semibold leading-6">{point}</li>
+            ))}
+          </ul>
+        </SectionCard>
+
+        <section>
+          <h2 className="mb-4 text-2xl font-black">予算内のおすすめセット</h2>
+          <div className="grid gap-4 lg:grid-cols-3">
+            {plans.map((plan, idx) => <SetPlanCard key={plan.label} plan={plan} recommended={idx === 1} />)}
+          </div>
+        </section>
+
+        <section>
+          <div className="mb-4 flex items-end justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-black">おすすめ商品一覧</h2>
+              <p className="mt-2 text-sm leading-6 text-black/60">※実際に選定したおすすめ商品を掲載しています。※表示金額は目安です。最新の価格・在庫・条件は各リンク先で確認してください。</p>
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {ranked.map((item) => <ProductCard key={item.id} item={item} />)}
+          </div>
+        </section>
+      </Container>
+    </main>
+  );
+}
