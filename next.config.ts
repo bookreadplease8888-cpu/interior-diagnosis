@@ -1,6 +1,0 @@
-.next
-node_modules
-.env.local
-.env
-.DS_Store
-vercel-debug.log*
